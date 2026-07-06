@@ -1,0 +1,270 @@
+name: Build QDC Connecting Launcher
+
+on:
+  push:
+    branches:
+      - main
+      - 'Add-Websocket-Tunnel-to-Connect-QDC-Device-through-SDP'
+    tags:
+      - 'v*'
+    paths:
+      - 'tools/websocket-tunnel-QDC/**'
+      - '.github/workflows/build-qdc-connecting-launcher.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tools/websocket-tunnel-QDC/**'
+  # Allow manual trigger for on-demand builds
+  workflow_dispatch:
+
+permissions:
+  contents: write  # needed for creating releases
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/websocket-tunnel-QDC
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 18
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '18'
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('tools/websocket-tunnel-QDC/**/*.gradle*', 'tools/websocket-tunnel-QDC/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      # ─── Build Windows JAR (JVM fat JAR) ──────────────────────────────
+      - name: Build Windows-side fat JAR
+        run: |
+          ./gradlew windowsJar
+          echo "=== After windowsJar: contents of build/libs/ ==="
+          ls -la build/libs/ 2>/dev/null || echo "(build/libs/ does not exist)"
+
+      # ─── Install Android command-line tools (for d8) ──────────────────
+      - name: Install Android command-line tools and build-tools
+        run: |
+          set -euo pipefail
+          ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$HOME/android-sdk}"
+          BUILD_TOOLS_VERSION="34.0.0"
+          CMDLINE_TOOLS_ZIP="commandlinetools-linux-11076708_latest.zip"
+          CMDLINE_TOOLS_SHA256="2d2d50857e4eb553af5a6dc3ad507a17adf43d115264b1afc116f95c92e5e258"
+
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+          cd "$ANDROID_SDK_ROOT/cmdline-tools"
+          curl -fsSL -o cmdline-tools.zip \
+            "https://dl.google.com/android/repository/${CMDLINE_TOOLS_ZIP}"
+          echo "${CMDLINE_TOOLS_SHA256}  cmdline-tools.zip" | sha256sum -c -
+          unzip -q cmdline-tools.zip
+          rm cmdline-tools.zip
+          mv cmdline-tools latest
+
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          printf 'y\n%.0s' $(seq 1 100) | "$SDKMANAGER" --licenses >/dev/null
+          "$SDKMANAGER" "platform-tools" "build-tools;${BUILD_TOOLS_VERSION}" >/dev/null
+
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT"   >> "$GITHUB_ENV"
+
+      - name: Build Android DEX JAR
+        run: |
+          D8_TOOL=$(find "$ANDROID_HOME/build-tools" -name "d8" -type f 2>/dev/null | sort -V | tail -1)
+          if [ -z "$D8_TOOL" ]; then
+            echo "::error::d8 tool not found in ANDROID_HOME ($ANDROID_HOME)"
+            exit 1
+          fi
+          echo "Using d8: $D8_TOOL"
+          export D8_PATH="$D8_TOOL"
+          ./gradlew dexJar
+          echo "=== After dexJar: contents of build/libs/ ==="
+          ls -la build/libs/ 2>/dev/null || echo "(build/libs/ does not exist)"
+
+      # ─── Verify build outputs ─────────────────────────────────────────
+      - name: Verify build outputs and static assets
+        run: |
+          echo "=== Verifying build outputs ==="
+          missing=0
+          for jar in build/libs/tunnel-windows-reverse-1.0.0.jar \
+                     build/libs/tunnel-android-reverse-1.0.0.jar; do
+            if [ -f "$jar" ]; then
+              echo "  OK: $jar ($(stat -c%s "$jar") bytes)"
+            else
+              echo "::error::Missing artifact: $jar"
+              missing=1
+            fi
+          done
+
+          echo ""
+          echo "=== Verifying static assets ==="
+          for file in config.local.bat.template \
+                      config.local.sh.template \
+                      connect-qdc-sdp.bat \
+                      connect-qdc-sdp.sh; do
+            if [ -f "$file" ]; then
+              echo "  OK: $file"
+            else
+              echo "::error::Missing static file: $file"
+              missing=1
+            fi
+          done
+
+          [ $missing -eq 0 ] || exit 1
+
+      # ─── Stage Windows package ────────────────────────────────────────
+      - name: Stage Windows package
+        run: |
+          echo "=== Staging Windows package ==="
+          mkdir -p package-windows
+          cp build/libs/tunnel-windows-reverse-1.0.0.jar package-windows/
+          cp build/libs/tunnel-android-reverse-1.0.0.jar package-windows/
+          cp connect-qdc-sdp.bat package-windows/
+          cp config.local.bat.template package-windows/
+          echo "Windows package contents:"
+          ls -la package-windows/
+
+      # ─── Stage Unix package (Linux & Mac) ─────────────────────────────
+      - name: Stage Unix package
+        run: |
+          echo "=== Staging Unix package ==="
+          mkdir -p package-unix
+          cp build/libs/tunnel-windows-reverse-1.0.0.jar package-unix/
+          cp build/libs/tunnel-android-reverse-1.0.0.jar package-unix/
+          cp connect-qdc-sdp.sh package-unix/
+          cp config.local.sh.template package-unix/
+          chmod +x package-unix/connect-qdc-sdp.sh
+          echo "Unix package contents:"
+          ls -la package-unix/
+
+      # ─── Upload Windows artifact ─────────────────────────────────────
+      - name: Upload Windows package artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: qdc-connecting-launcher-windows
+          path: tools/websocket-tunnel-QDC/package-windows/
+          if-no-files-found: error
+
+      # ─── Upload Unix artifact ────────────────────────────────────────
+      - name: Upload Unix package artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: qdc-connecting-launcher-unix
+          path: tools/websocket-tunnel-QDC/package-unix/
+          if-no-files-found: error
+
+  # ─── Release Job: publish packages to GitHub Releases on tag push ─────
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Download Windows package artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: qdc-connecting-launcher-windows
+          path: release-windows
+
+      - name: Download Unix package artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: qdc-connecting-launcher-unix
+          path: release-unix
+
+      - name: List release assets
+        run: |
+          echo "=== Windows package ==="
+          ls -la release-windows/
+          echo ""
+          echo "=== Unix package ==="
+          ls -la release-unix/
+
+      - name: Create release archives
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          # Windows ZIP
+          cd release-windows
+          zip "../QDC-Connecting-Launcher-Windows-${TAG}.zip" *
+          cd ..
+
+          # Linux tar.gz (preserves executable permissions)
+          tar -czf "QDC-Connecting-Launcher-Linux-${TAG}.tar.gz" -C release-unix .
+
+          # macOS tar.gz (identical contents, separate download for clarity)
+          tar -czf "QDC-Connecting-Launcher-macOS-${TAG}.tar.gz" -C release-unix .
+
+          echo "=== Created archives ==="
+          ls -la QDC-Connecting-Launcher-*
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          NOTES_FILE="$(mktemp)"
+          cat >"$NOTES_FILE" <<'EOF'
+          ## QDC Connecting Launcher
+
+          ### Which package should I download?
+
+          | Platform | Package |
+          |----------|---------|
+          | **Windows** | `QDC-Connecting-Launcher-Windows-<tag>.zip` |
+          | **Linux**   | `QDC-Connecting-Launcher-Linux-<tag>.tar.gz` |
+          | **macOS**   | `QDC-Connecting-Launcher-macOS-<tag>.tar.gz` |
+
+          ---
+
+          ### Windows Package Contents
+
+          | File | Description |
+          |------|-------------|
+          | `tunnel-android-reverse-1.0.0.jar` | Android DEX JAR — deploy via `adb push` + `app_process` |
+          | `tunnel-windows-reverse-1.0.0.jar` | JVM fat JAR — run with `java -jar` on JDK 18+ |
+          | `config.local.bat.template` | Batch config template — copy to `config.local.bat` and fill in your API Key  |
+          | `connect-qdc-sdp.bat` | Windows batch launcher script |
+
+          ### Unix Package Contents (Linux & Mac)
+
+          | File | Description |
+          |------|-------------|
+          | `tunnel-android-reverse-1.0.0.jar` | Android DEX JAR — deploy via `adb push` + `app_process` |
+          | `tunnel-windows-reverse-1.0.0.jar` | JVM fat JAR — run with `java -jar` on JDK 18+ |
+          | `config.local.sh.template` | Shell config template — copy to `config.local.sh` and fill in your API Key  |
+          | `connect-qdc-sdp.sh` | Shell launcher script |
+
+          ---
+
+          ### Quick Start
+
+          1. Download and extract the package for your platform
+          2. Copy the config template and fill in your API Key and remove suffix .template in the filename
+          3. Run the launcher script:
+             - **Windows:** `connect-qdc-sdp.bat`
+             - **Linux/Mac:** `./connect-qdc-sdp.sh`
+          EOF
+
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "QDC Connecting Launcher $TAG" \
+            --notes-file "$NOTES_FILE" \
+            "QDC-Connecting-Launcher-Windows-${TAG}.zip" \
+            "QDC-Connecting-Launcher-Linux-${TAG}.tar.gz" \
+            "QDC-Connecting-Launcher-macOS-${TAG}.tar.gz"

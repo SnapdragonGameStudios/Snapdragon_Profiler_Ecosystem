@@ -13,5 +13,16 @@ wheels/
 input/
 output/
 
+# Gradle / Java
+.gradle/
+*.class
+*.jar
+!**/gradle/wrapper/gradle-wrapper.jar
+local.properties
+
+# Local configuration (contains secrets)
+config.local.bat
+config.local.sh
+
 # Local AI tool state
 .claude/

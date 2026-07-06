@@ -1,0 +1,104 @@
+//============================================================================================================
+//  
+//                   Copyright (c) 2023, Qualcomm Innovation Center, Inc. All rights reserved.
+//                               SPDX-License-Identifier: BSD-3-Clause
+//  
+//============================================================================================================ 
+
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'com.sdp.tunnel'
+version = '1.0.0'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_18
+    targetCompatibility = JavaVersion.VERSION_18
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.java-websocket:Java-WebSocket:1.5.7'
+}
+
+// Main class for Android side
+application {
+    mainClass = 'com.sdp.tunnel.TunnelAndroidReverse'
+}
+
+// ─── Internal: intermediate JVM fat JAR (input for d8, NOT published) ──────
+jar {
+    archiveBaseName = '_intermediate-android'
+    manifest {
+        attributes 'Main-Class': 'com.sdp.tunnel.TunnelAndroidReverse'
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+}
+
+// ─── Final output: Windows-side fat JAR (JVM) ─────────────────────────────
+tasks.register('windowsJar', Jar) {
+    dependsOn classes
+    archiveBaseName = 'tunnel-windows-reverse'
+    destinationDirectory = layout.buildDirectory.dir('libs')
+    manifest {
+        attributes 'Main-Class': 'com.sdp.tunnel.TunnelWindowsReverse'
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from sourceSets.main.output
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+}
+
+// ─── Final output: Android DEX JAR (for app_process) ──────────────────────
+// Converts the intermediate JVM JAR to DEX format using Android d8 tool.
+// Set D8_PATH env var or uses default location.
+tasks.register('dexJar') {
+    description = 'Convert fat JAR to DEX-based JAR for Android app_process'
+    group = 'android'
+    dependsOn jar
+
+    doLast {
+        // Locate d8 tool
+        def d8Cmd = System.env.D8_PATH ?:
+                    (org.gradle.internal.os.OperatingSystem.current().isWindows()
+                        ? "${System.env.ANDROID_HOME}/cmdline-tools/bin/d8.bat"
+                        : 'd8')
+
+        def inputJar = jar.archiveFile.get().asFile
+        def libsDir = layout.buildDirectory.dir('libs').get().asFile
+        def dexOutputDir = layout.buildDirectory.dir('dex').get().asFile
+        def outputDexJar = new File(libsDir, "tunnel-android-reverse-${version}.jar")
+
+        // Clean and create output directory
+        delete dexOutputDir
+        dexOutputDir.mkdirs()
+
+        logger.lifecycle("Running d8: ${d8Cmd}")
+        logger.lifecycle("Input JAR: ${inputJar}")
+
+        exec {
+            commandLine d8Cmd, '--min-api', '26', '--output', dexOutputDir.absolutePath, inputJar.absolutePath
+        }
+
+        // Package classes.dex into final JAR with aligned naming
+        ant.zip(destfile: outputDexJar) {
+            fileset(dir: dexOutputDir) {
+                include(name: 'classes.dex')
+            }
+        }
+
+        // Remove the intermediate JAR from libs (not for distribution)
+        delete inputJar
+
+        logger.lifecycle("DEX JAR created: ${outputDexJar}")
+    }
+}

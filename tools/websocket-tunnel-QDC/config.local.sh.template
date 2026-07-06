@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#============================================================================================================
+#  
+#                   Copyright (c) 2023, Qualcomm Innovation Center, Inc. All rights reserved.
+#                               SPDX-License-Identifier: BSD-3-Clause
+#  
+#============================================================================================================ 
+# ==============================================================================
+# Local configuration for connect-qdc-sdp.sh
+#
+# Copy this file to "config.local.sh" (in the same directory) and fill in your
+# values. config.local.sh is git-ignored so your secrets stay local.
+# ==============================================================================
+
+# REQUIRED: Path to your SSH private key
+export SSH_KEY="$HOME/.ssh/id_ed25519"
+
+# REQUIRED: Your QDC API key (from https://qdc.qualcomm.com)
+export QDC_API_KEY="your-api-key-here"
+
+# OPTIONAL: Override the QDC sessions API URL (defaults are usually fine)
+# export QDC_SESSIONS_URL="https://api.qualcomm.com/deviceloud/v1/sessions"
