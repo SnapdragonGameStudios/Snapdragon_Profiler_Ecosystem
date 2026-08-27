@@ -11,9 +11,6 @@ on:
     tags:
       - 'v*'
       - 'Latest'
-    paths:
-      - 'tools/websocket-tunnel-QDC/src/**'
-      - '.github/workflows/build-qdc-cpp-tunnel.yml'
   pull_request:
     branches: [main]
     paths:
