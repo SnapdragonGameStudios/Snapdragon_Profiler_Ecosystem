@@ -198,7 +198,7 @@ jobs:
           ls -la staging/
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.config.artifact }}
           path: staging/
@@ -319,14 +319,14 @@ jobs:
           ls -la QDC_SDP_Tunnel_*.zip QDC_SDP_Tunnel_*.tar.gz
 
       - name: Upload Windows package artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: release-windows-zip
           path: QDC_SDP_Tunnel_Windows_*.zip
           if-no-files-found: error
 
       - name: Upload Linux package artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: release-linux-tar
           path: QDC_SDP_Tunnel_Linux_*.tar.gz
