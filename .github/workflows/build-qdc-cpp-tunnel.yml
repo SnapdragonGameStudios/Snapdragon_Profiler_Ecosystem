@@ -213,7 +213,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Download linux-native artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: qdc-tunnel-linux-x86_64
           path: bin/
@@ -235,31 +235,31 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Download linux-native artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: qdc-tunnel-linux-x86_64
           path: artifacts/linux-native/
 
       - name: Download aarch64 artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: qdc-tunnel-aarch64
           path: artifacts/aarch64/
 
       - name: Download linux host aarch64 artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: qdc-tunnel-host-linux-aarch64
           path: artifacts/linux-aarch64/
 
       - name: Download windows artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: qdc-tunnel-host-windows-x86_64
           path: artifacts/windows/
 
       - name: Download windows arm64 artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: qdc-tunnel-host-windows-arm64
           path: artifacts/windows-arm64/
@@ -342,13 +342,13 @@ jobs:
 
     steps:
       - name: Download Windows package
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: release-windows-zip
           path: release/
 
       - name: Download Linux package
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: release-linux-tar
           path: release/
