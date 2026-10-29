@@ -31,6 +31,8 @@
 #   QDC_CHIPSET_CATEGORY - Mobile or IOT; used when passing device ID manually
 #   HOST_BIN             - Explicit path to qdc-tunnel-host (host binary)
 #   TARGET_BIN           - Explicit path to qdc-tunnel-target (device binary, aarch64)
+#   ADB_PATH             - Full path to the adb binary (Mobile only). Set this when adb is
+#                          not on PATH; otherwise the launcher uses "adb" from PATH.
 #
 # IOT-specific environment variables (required when QDC_CHIPSET_CATEGORY=IOT):
 #   IOT_TARGET_SSH       - SSH user@host for the IoT target device
@@ -234,9 +236,9 @@ detect_ssh_host() {
     fi
 
     if [[ "$is_internal" == "true" ]]; then
-        echo "sshtunnel@ssh.qdc-internal.qualcomm.com"
+        echo "sshtunnel@ssh-cn.qdc-internal.qualcomm.com"
     else
-        echo "sshtunnel@ssh.qdc.qualcomm.com"
+        echo "sshtunnel@ssh-cn.qdc.qualcomm.com"
     fi
 }
 
@@ -456,18 +458,18 @@ if [[ "${QDC_CHIPSET_CATEGORY,,}" == "iot" ]]; then
         sleep 2
     fi
     launch_in_terminal "QDC SDP - IoT Target tunnel" \
-        "${IOT_AUTH_STR}ssh ${IOT_SSH_OPTS[*]} $IOT_TARGET_SSH \"$IOT_REMOTE_DIR/qdc-tunnel-target --port-map 6500:8900 --port-map 6502:8902\""
+        "${IOT_AUTH_STR}ssh ${IOT_SSH_OPTS[*]} $IOT_TARGET_SSH \"$IOT_REMOTE_DIR/qdc-tunnel-target --port-map 8896:8927 --port-map 8898:8929\""
     sleep "$STARTUP_DELAY_SECONDS"
 
-    # [IOT 5/6] SSH port tunnel for the SDP data ports 8900/8902 (via QDC SSH host)
-    echo "[IOT 5/6] Starting Host-to-Target SDP SSH port tunnel (8900/8902)..."
-    kill_port 8900
-    kill_port 8902
+    # [IOT 5/6] SSH port tunnel for the SDP transport ports 8927/8929 (via QDC SSH host)
+    echo "[IOT 5/6] Starting Host-to-Target SDP SSH port tunnel (8927/8929)..."
+    kill_port 8927
+    kill_port 8929
     launch_in_terminal "QDC SDP - SDP SSH port tunnel" \
-        "ssh -i \"$SSH_KEY\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -L 8900:$ADB_REMOTE_HOST:8900 -L 8902:$ADB_REMOTE_HOST:8902 -N $SSH_USER_HOST"
+        "ssh -i \"$SSH_KEY\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -L 8927:$ADB_REMOTE_HOST:8927 -L 8929:$ADB_REMOTE_HOST:8929 -N $SSH_USER_HOST"
     sleep "$STARTUP_DELAY_SECONDS"
-    if ! wait_for_port 8900 "SDP port 8900" || ! wait_for_port 8902 "SDP port 8902"; then
-        echo "ERROR: SDP SSH port tunnel failed - ports 8900/8902 are not listening."
+    if ! wait_for_port 8927 "SDP port 8927" || ! wait_for_port 8929 "SDP port 8929"; then
+        echo "ERROR: SDP SSH port tunnel failed - ports 8927/8929 are not listening."
         echo "       Check SSH key, device ID ($QDC_DEVICE_ID), and network connectivity."
         fail
     fi
@@ -475,7 +477,7 @@ if [[ "${QDC_CHIPSET_CATEGORY,,}" == "iot" ]]; then
     # [IOT 6/6] Start the host tunnel locally
     echo "[IOT 6/6] Starting Host tunnel..."
     launch_in_terminal "QDC SDP - Host tunnel" \
-        "\"$HOST_BIN\" --remote-host 127.0.0.1 --port-map 8900:6500 --port-map 8902:6502"
+        "\"$HOST_BIN\" --remote-host 127.0.0.1 --port-map 8927:8896 --port-map 8929:8898"
 
     # Clear stale localhost host keys (right before SDP connects).
     echo "Clearing stale known_hosts entries for localhost:$IOT_LOCAL_SSH_PORT..."
@@ -488,10 +490,21 @@ else
     # ==========================================================================
     # Mobile branch: Android target via ADB
     # ==========================================================================
-    require_tool adb || fail
+    # Resolve adb: honor ADB_PATH when adb is not on PATH, else use "adb" from PATH.
+    ADB="${ADB_PATH:-adb}"
+    if [[ -n "${ADB_PATH:-}" ]]; then
+        if [[ ! -x "$ADB" ]]; then
+            echo "ERROR: ADB_PATH is set but adb is not executable: \"$ADB\""
+            echo "       Point ADB_PATH at the adb binary itself (not its folder) in config.local.sh."
+            fail
+        fi
+        echo "Using adb from ADB_PATH: $ADB"
+    else
+        require_tool adb || fail
+    fi
 
     echo "[1/6] Cleaning up existing local ADB server and port 5037 users..."
-    adb kill-server >/dev/null 2>&1 || true
+    "$ADB" kill-server >/dev/null 2>&1 || true
     kill_port 5037
 
     echo "[2/6] Starting ADB discovery SSH tunnel..."
@@ -502,36 +515,36 @@ else
         echo "ERROR: ADB discovery tunnel failed - port 5037 is not listening."
         fail
     fi
-    adb devices || true
+    "$ADB" devices || true
 
     echo "[3/6] Forwarding ADB ports to device..."
-    adb forward tcp:8900 tcp:8900 || fail
-    adb forward tcp:8902 tcp:8902 || fail
+    "$ADB" forward tcp:8927 tcp:8927 || fail
+    "$ADB" forward tcp:8929 tcp:8929 || fail
 
     echo "[4/6] Pushing qdc-tunnel-target to device and making it executable..."
-    adb push "$TARGET_BIN" "$ANDROID_REMOTE_DIR/qdc-tunnel-target" || fail
-    adb shell "chmod 755 $ANDROID_REMOTE_DIR/qdc-tunnel-target" || fail
+    "$ADB" push "$TARGET_BIN" "$ANDROID_REMOTE_DIR/qdc-tunnel-target" || fail
+    "$ADB" shell "chmod 755 $ANDROID_REMOTE_DIR/qdc-tunnel-target" || fail
     # Kill any stale instance holding the ports from a previous run.
-    adb shell "pkill -f '$ANDROID_REMOTE_DIR/qdc-tunnel-target'" >/dev/null 2>&1 || true
+    "$ADB" shell "pkill -f '$ANDROID_REMOTE_DIR/qdc-tunnel-target'" >/dev/null 2>&1 || true
 
     echo "[5/6] Starting Target tunnel..."
     launch_in_terminal "QDC SDP - Target tunnel" \
-        "adb shell \"$ANDROID_REMOTE_DIR/qdc-tunnel-target --port-map 6500:8900 --port-map 6502:8902\""
+        "\"$ADB\" shell \"$ANDROID_REMOTE_DIR/qdc-tunnel-target --port-map 8896:8927 --port-map 8898:8929\""
     sleep "$STARTUP_DELAY_SECONDS"
 
     echo "[6/6] Starting Host-to-Target SDP SSH port tunnel + Host tunnel..."
-    kill_port 8900
-    kill_port 8902
+    kill_port 8927
+    kill_port 8929
     launch_in_terminal "QDC SDP - SDP SSH port tunnel" \
-        "ssh -i \"$SSH_KEY\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -L 8900:$ADB_REMOTE_HOST:8900 -L 8902:$ADB_REMOTE_HOST:8902 -N $SSH_USER_HOST"
+        "ssh -i \"$SSH_KEY\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -L 8927:$ADB_REMOTE_HOST:8927 -L 8929:$ADB_REMOTE_HOST:8929 -L 8900:$ADB_REMOTE_HOST:8900 -L 8902:$ADB_REMOTE_HOST:8902 -L 8904:$ADB_REMOTE_HOST:8904 -L 8906:$ADB_REMOTE_HOST:8906 -L 8908:$ADB_REMOTE_HOST:8908 -L 8910:$ADB_REMOTE_HOST:8910 -L 8912:$ADB_REMOTE_HOST:8912 -L 8914:$ADB_REMOTE_HOST:8914 -L 8916:$ADB_REMOTE_HOST:8916 -L 8918:$ADB_REMOTE_HOST:8918 -L 8920:$ADB_REMOTE_HOST:8920 -L 8922:$ADB_REMOTE_HOST:8922 -L 8924:$ADB_REMOTE_HOST:8924 -L 8926:$ADB_REMOTE_HOST:8926 -N $SSH_USER_HOST"
     sleep "$STARTUP_DELAY_SECONDS"
-    if ! wait_for_port 8900 "SDP port 8900" || ! wait_for_port 8902 "SDP port 8902"; then
-        echo "ERROR: SDP SSH port tunnel failed - ports 8900/8902 are not listening."
+    if ! wait_for_port 8927 "SDP port 8927" || ! wait_for_port 8929 "SDP port 8929"; then
+        echo "ERROR: SDP SSH port tunnel failed - ports 8927/8929 are not listening."
         fail
     fi
 
     launch_in_terminal "QDC SDP - Host tunnel" \
-        "\"$HOST_BIN\" --remote-host 127.0.0.1 --port-map 8900:6500 --port-map 8902:6502"
+        "\"$HOST_BIN\" --remote-host 127.0.0.1 --port-map 8927:8896 --port-map 8929:8898"
 fi
 
 echo

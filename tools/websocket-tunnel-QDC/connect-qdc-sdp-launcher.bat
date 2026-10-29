@@ -30,6 +30,8 @@ rem   QDC_SESSIONS_URL     - QDC sessions API endpoint (has a default)
 rem   QDC_CHIPSET_CATEGORY - Mobile or IOT; used when passing device ID manually
 rem   HOST_BIN             - Explicit path to qdc-tunnel-host.exe (host binary)
 rem   TARGET_BIN           - Explicit path to qdc-tunnel-target (device binary, aarch64)
+rem   ADB_PATH             - Full path to adb.exe (Mobile only). Set this when adb is not
+rem                          on PATH; otherwise the launcher uses "adb" from PATH.
 rem
 rem IOT-SPECIFIC optional variables (only used when QDC_CHIPSET_CATEGORY=IOT):
 rem   IOT_TARGET_SSH       - SSH user@host for the IoT Linux device
@@ -56,9 +58,9 @@ if not defined SSH_KEY (
     goto :fail
 )
 if not defined SSH_USER_HOST (
-    set "SSH_USER_HOST=sshtunnel@ssh.qdc.qualcomm.com"
+    set "SSH_USER_HOST=sshtunnel@ssh-cn.qdc.qualcomm.com"
     for /f "delims=" %%S in ('ipconfig /all ^| findstr /i "DNS Servers"') do (
-        echo %%S | findstr /i "qualcomm.com" >nul && set "SSH_USER_HOST=sshtunnel@ssh.qdc-internal.qualcomm.com"
+        echo %%S | findstr /i "qualcomm.com" >nul && set "SSH_USER_HOST=sshtunnel@ssh-cn.qdc-internal.qualcomm.com"
     )
     echo Auto-detected SSH host: !SSH_USER_HOST!
 )
@@ -120,6 +122,13 @@ echo API chipset category: %QDC_CHIPSET_CATEGORY%
 set "ANDROID_REMOTE_DIR=/data/local/tmp"
 set "STARTUP_DELAY_SECONDS=5"
 
+rem --- Resolve adb (Mobile only). Honor ADB_PATH when adb is not on PATH. ---
+if defined ADB_PATH (
+    set "ADB=%ADB_PATH%"
+) else (
+    set "ADB=adb"
+)
+
 rem --- Detect host CPU architecture (selects the matching host binary) ---
 rem PROCESSOR_ARCHITECTURE is ARM64 on Windows-on-ARM, AMD64 on x64. Under a
 rem 32-bit shell on 64-bit Windows, PROCESSOR_ARCHITEW6432 holds the real arch.
@@ -154,10 +163,10 @@ rem ======================================================================
 rem Branch: Mobile / Android device (ADB-based workflow)
 rem ======================================================================
 
-call :require_tool adb || goto :fail
+call :require_adb || goto :fail
 
 echo [1/6] Cleaning up existing local ADB server and port 5037 users...
-adb kill-server >nul 2>nul
+"%ADB%" kill-server >nul 2>nul
 call :kill_port 5037
 
 echo [2/6] Starting ADB discovery SSH tunnel in a new window...
@@ -180,20 +189,20 @@ if errorlevel 1 (
 echo Port 5037 is listening - ADB discovery SSH tunnel OK.
 echo.
 echo Discovered ADB devices:
-adb devices
+"%ADB%" devices
 echo.
 
 echo [3/6] Forwarding Linux ADB ports to Android device...
-adb forward tcp:8900 tcp:8900 || goto :fail
-adb forward tcp:8902 tcp:8902 || goto :fail
+"%ADB%" forward tcp:8927 tcp:8927 || goto :fail
+"%ADB%" forward tcp:8929 tcp:8929 || goto :fail
 
 echo [4/6] Pushing qdc-tunnel-target to device and making it executable...
-adb push "%TARGET_BIN%" "%ANDROID_REMOTE_DIR%/qdc-tunnel-target" || goto :fail
-adb shell "chmod 755 %ANDROID_REMOTE_DIR%/qdc-tunnel-target" || goto :fail
-adb shell "pkill -f %ANDROID_REMOTE_DIR%/qdc-tunnel-target" >nul 2>nul
+"%ADB%" push "%TARGET_BIN%" "%ANDROID_REMOTE_DIR%/qdc-tunnel-target" || goto :fail
+"%ADB%" shell "chmod 755 %ANDROID_REMOTE_DIR%/qdc-tunnel-target" || goto :fail
+"%ADB%" shell "pkill -f %ANDROID_REMOTE_DIR%/qdc-tunnel-target" >nul 2>nul
 
 echo [5/6] Starting Target tunnel in a new window...
-start "QDC SDP - Target tunnel" cmd /k adb shell "%ANDROID_REMOTE_DIR%/qdc-tunnel-target --port-map 6500:8900 --port-map 6502:8902"
+start "QDC SDP - Target tunnel" cmd /k ""%ADB%" shell "%ANDROID_REMOTE_DIR%/qdc-tunnel-target --port-map 8896:8927 --port-map 8898:8929""
 call :sleep %STARTUP_DELAY_SECONDS%
 
 echo [6/6] Starting Host-to-Target SDP SSH port tunnel + Host tunnel...
@@ -202,26 +211,26 @@ set "SSH6_ATTEMPT=0"
 set /a SSH6_ATTEMPT+=1
 if !SSH6_ATTEMPT! gtr 1 (
     echo Retrying SDP SSH port tunnel ^(attempt !SSH6_ATTEMPT!/3^)...
-    call :kill_port 8900
-    call :kill_port 8902
+    call :kill_port 8927
+    call :kill_port 8929
 )
-start "QDC SDP - SDP SSH port tunnel" cmd /k ssh -i "%SSH_KEY%" -o IdentitiesOnly=yes -L 8900:%ADB_REMOTE_HOST%:8900 -L 8902:%ADB_REMOTE_HOST%:8902 -N %SSH_USER_HOST%
+start "QDC SDP - SDP SSH port tunnel" cmd /k ssh -i "%SSH_KEY%" -o IdentitiesOnly=yes -L 8927:%ADB_REMOTE_HOST%:8927 -L 8929:%ADB_REMOTE_HOST%:8929 -L 8900:%ADB_REMOTE_HOST%:8900 -L 8902:%ADB_REMOTE_HOST%:8902 -L 8904:%ADB_REMOTE_HOST%:8904 -L 8906:%ADB_REMOTE_HOST%:8906 -L 8908:%ADB_REMOTE_HOST%:8908   -L 8910:%ADB_REMOTE_HOST%:8910   -L 8912:%ADB_REMOTE_HOST%:8912   -L 8914:%ADB_REMOTE_HOST%:8914   -L 8916:%ADB_REMOTE_HOST%:8916  -L 8918:%ADB_REMOTE_HOST%:8918   -L 8920:%ADB_REMOTE_HOST%:8920   -L 8922:%ADB_REMOTE_HOST%:8922   -L 8924:%ADB_REMOTE_HOST%:8924  -L 8926:%ADB_REMOTE_HOST%:8926 -N %SSH_USER_HOST%
 call :sleep %STARTUP_DELAY_SECONDS%
-netstat -ano -p tcp | findstr /r /c:":8900 .*LISTENING" >nul 2>nul
+netstat -ano -p tcp | findstr /r /c:":8927 .*LISTENING" >nul 2>nul
 if errorlevel 1 (
     if !SSH6_ATTEMPT! lss 3 goto :ssh6_retry
-    echo ERROR: SDP SSH port tunnel failed after 3 attempts - port 8900 is not listening.
+    echo ERROR: SDP SSH port tunnel failed after 3 attempts - port 8927 is not listening.
     goto :fail
 )
-netstat -ano -p tcp | findstr /r /c:":8902 .*LISTENING" >nul 2>nul
+netstat -ano -p tcp | findstr /r /c:":8929 .*LISTENING" >nul 2>nul
 if errorlevel 1 (
     if !SSH6_ATTEMPT! lss 3 goto :ssh6_retry
-    echo ERROR: SDP SSH port tunnel failed after 3 attempts - port 8902 is not listening.
+    echo ERROR: SDP SSH port tunnel failed after 3 attempts - port 8929 is not listening.
     goto :fail
 )
-echo Ports 8900 and 8902 are listening - SDP SSH port tunnel OK.
+echo Ports 8927 and 8929 are listening - SDP SSH port tunnel OK.
 
-start "QDC SDP - Host tunnel" cmd /k ""%HOST_BIN%" --remote-host 127.0.0.1 --port-map 8900:6500 --port-map 8902:6502"
+start "QDC SDP - Host tunnel" cmd /k ""%HOST_BIN%" --remote-host 127.0.0.1 --port-map 8927:8896 --port-map 8929:8898"
 
 goto :done
 
@@ -313,38 +322,38 @@ if not errorlevel 1 (
     ssh !IOT_SSH_OPTS! !IOT_TARGET_SSH! "pkill -f !IOT_REMOTE_DIR!/qdc-tunnel-target"
     call :sleep 2
 )
-start "QDC SDP - IoT Target tunnel" cmd /k ssh !IOT_SSH_OPTS! !IOT_TARGET_SSH! "!IOT_REMOTE_DIR!/qdc-tunnel-target --port-map 6500:8900 --port-map 6502:8902"
+start "QDC SDP - IoT Target tunnel" cmd /k ssh !IOT_SSH_OPTS! !IOT_TARGET_SSH! "!IOT_REMOTE_DIR!/qdc-tunnel-target --port-map 8896:8927 --port-map 8898:8929"
 call :sleep %STARTUP_DELAY_SECONDS%
 
-rem --- [IOT 5/6] Start SSH port tunnel (8900/8902) via QDC SSH host ---
+rem --- [IOT 5/6] Start SSH port tunnel (8927/8929) via QDC SSH host ---
 echo [IOT 5/6] Starting Host-to-Target SDP SSH port tunnel in a new window...
 set "SSH_IOT6_ATTEMPT=0"
 :ssh_iot6_retry
 set /a SSH_IOT6_ATTEMPT+=1
 if !SSH_IOT6_ATTEMPT! gtr 1 (
     echo Retrying SDP SSH port tunnel ^(attempt !SSH_IOT6_ATTEMPT!/3^)...
-    call :kill_port 8900
-    call :kill_port 8902
+    call :kill_port 8927
+    call :kill_port 8929
 )
-start "QDC SDP - SDP SSH port tunnel" cmd /k ssh -i "%SSH_KEY%" -o IdentitiesOnly=yes -L 8900:%ADB_REMOTE_HOST%:8900 -L 8902:%ADB_REMOTE_HOST%:8902 -N %SSH_USER_HOST%
+start "QDC SDP - SDP SSH port tunnel" cmd /k ssh -i "%SSH_KEY%" -o IdentitiesOnly=yes -L 8927:%ADB_REMOTE_HOST%:8927 -L 8929:%ADB_REMOTE_HOST%:8929 -N %SSH_USER_HOST%
 call :sleep %STARTUP_DELAY_SECONDS%
-netstat -ano -p tcp | findstr /r /c:":8900 .*LISTENING" >nul 2>nul
+netstat -ano -p tcp | findstr /r /c:":8927 .*LISTENING" >nul 2>nul
 if errorlevel 1 (
     if !SSH_IOT6_ATTEMPT! lss 3 goto :ssh_iot6_retry
-    echo ERROR: SDP SSH port tunnel failed after 3 attempts - port 8900 is not listening.
+    echo ERROR: SDP SSH port tunnel failed after 3 attempts - port 8927 is not listening.
     goto :fail
 )
-netstat -ano -p tcp | findstr /r /c:":8902 .*LISTENING" >nul 2>nul
+netstat -ano -p tcp | findstr /r /c:":8929 .*LISTENING" >nul 2>nul
 if errorlevel 1 (
     if !SSH_IOT6_ATTEMPT! lss 3 goto :ssh_iot6_retry
-    echo ERROR: SDP SSH port tunnel failed after 3 attempts - port 8902 is not listening.
+    echo ERROR: SDP SSH port tunnel failed after 3 attempts - port 8929 is not listening.
     goto :fail
 )
-echo Ports 8900 and 8902 are listening - SDP SSH port tunnel OK.
+echo Ports 8927 and 8929 are listening - SDP SSH port tunnel OK.
 
 rem --- [IOT 6/6] Start Host tunnel on Windows ---
 echo [IOT 6/6] Starting Host tunnel in a new window...
-start "QDC SDP - Host tunnel" cmd /k ""%HOST_BIN%" --remote-host 127.0.0.1 --port-map 8900:6500 --port-map 8902:6502"
+start "QDC SDP - Host tunnel" cmd /k ""%HOST_BIN%" --remote-host 127.0.0.1 --port-map 8927:8896 --port-map 8929:8898"
 
 rem --- Clear stale localhost host keys (right before SDP connects) ---
 echo Clearing stale known_hosts entries for localhost:!IOT_LOCAL_SSH_PORT!...
@@ -380,6 +389,26 @@ rem ======================================================================
 where %~1 >nul 2>nul
 if errorlevel 1 (
     echo ERROR: Required tool "%~1" was not found in PATH.
+    exit /b 1
+)
+exit /b 0
+
+rem Validate the resolved adb (%ADB%). If ADB_PATH was set, require the file to
+rem exist; otherwise fall back to a PATH lookup for "adb".
+:require_adb
+if defined ADB_PATH (
+    if not exist "%ADB%" (
+        echo ERROR: ADB_PATH is set but adb was not found: "%ADB%"
+        echo        Point ADB_PATH at adb.exe itself ^(not its folder^) in config.local.bat.
+        exit /b 1
+    )
+    echo Using adb from ADB_PATH: "%ADB%"
+    exit /b 0
+)
+where adb >nul 2>nul
+if errorlevel 1 (
+    echo ERROR: Required tool "adb" was not found in PATH.
+    echo        Install platform-tools and add adb to PATH, or set ADB_PATH in config.local.bat.
     exit /b 1
 )
 exit /b 0
