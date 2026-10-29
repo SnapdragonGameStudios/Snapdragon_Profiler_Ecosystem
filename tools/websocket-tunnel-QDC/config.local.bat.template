@@ -24,6 +24,11 @@ set "QDC_API_KEY=your-api-key-here"
 rem OPTIONAL: Override the QDC sessions API URL (defaults are usually fine)
 rem set "QDC_SESSIONS_URL=https://api.qualcomm.com/deviceloud/v1/sessions"
 
+rem OPTIONAL (Mobile/Android targets): Full path to the adb executable.
+rem Set this only if adb is NOT on your PATH. Point it at adb.exe itself
+rem (not its folder). When unset, the launcher uses "adb" from PATH.
+rem set "ADB_PATH=C:\platform-tools\adb.exe"
+
 
 rem ==============================================================================
 rem IOT-SPECIFIC settings (only used when QDC_CHIPSET_CATEGORY=IOT)

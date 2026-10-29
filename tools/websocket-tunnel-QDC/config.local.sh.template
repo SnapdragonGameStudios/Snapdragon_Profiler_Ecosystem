@@ -21,6 +21,11 @@ export QDC_API_KEY="your-api-key-here"
 # OPTIONAL: Override the QDC sessions API URL (defaults are usually fine)
 # export QDC_SESSIONS_URL="https://api.qualcomm.com/deviceloud/v1/sessions"
 
+# OPTIONAL (Mobile/Android targets): Full path to the adb executable.
+# Set this only if adb is NOT on your PATH. Point it at the adb binary itself
+# (not its folder). When unset, the launcher uses "adb" from PATH.
+# export ADB_PATH="$HOME/Android/Sdk/platform-tools/adb"
+
 
 
 # ==============================================================================
